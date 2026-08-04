@@ -1,0 +1,14 @@
+{
+  "name": "popina-stock-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP de gestion de stock multi-sites (production, transferts, fournisseurs) avec integration Popina - zero dependance, Node.js >= 22.5",
+  "engines": { "node": ">=22.5.0" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node lib/seed.js",
+    "reset-db": "node lib/reset.js",
+    "test": "node --test test/*.test.js"
+  }
+}

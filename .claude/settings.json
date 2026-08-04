@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test*)",
+      "Bash(node --test test/*.test.js)",
+      "Bash(curl -s http://localhost:3000/*)"
+    ]
+  }
+}

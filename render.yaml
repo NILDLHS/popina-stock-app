@@ -1,0 +1,22 @@
+# Blueprint Render : provisionne le service web + un disque persistant pour la base SQLite en un clic.
+# Voir https://render.com/docs/blueprint-spec
+# Plan "starter" requis (pas "free") : le tier gratuit ne supporte pas les disques persistants et met
+# le service en veille apres inactivite, ce qui reinitialiserait la base a chaque reveil.
+services:
+  - type: web
+    name: popina-stock-app
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: APP_DB_PATH
+        value: /data/app.db
+      - key: BASIC_AUTH_USER
+        sync: false
+      - key: BASIC_AUTH_PASS
+        sync: false
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
