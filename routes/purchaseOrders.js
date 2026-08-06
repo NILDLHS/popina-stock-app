@@ -79,6 +79,7 @@ function register(router) {
       SELECT pol.*, p.name as product_name, u.code as unit_code FROM purchase_order_lines pol
       JOIN products p ON p.id = pol.product_id JOIN units u ON u.id = pol.unit_id WHERE pol.purchase_order_id = ?
     `).all(po.id);
+    const products = db.prepare('SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id=p.unit_id WHERE p.is_active = 1 ORDER BY p.name').all();
 
     const body = `
       <div class="page-header">
@@ -113,9 +114,31 @@ function register(router) {
             }).join('')}
           </tbody>
         </table>
+        ${po.status !== 'CANCELED' ? `
+        <hr class="sep" />
+        <h3>Ajouter une ligne</h3>
+        <form method="POST" action="/purchase-orders/${po.id}/lines">
+          <div class="form-row">
+            <div class="field">
+              <label>Produit</label>
+              <select name="product_id" required>${products.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit_code)})</option>`).join('')}</select>
+            </div>
+            <div class="field"><label>Quantite commandee</label><input name="quantity" type="number" step="0.0001" required /></div>
+            <div class="field"><label>Prix unitaire (optionnel, en euros)</label><input name="unit_price" type="number" step="0.01" /></div>
+          </div>
+          <button class="btn btn-secondary" type="submit">Ajouter la ligne</button>
+        </form>` : ''}
       </div>
     `;
     res.end(layout({ title: 'Commande fournisseur', activePath: '/purchase-orders', body, flash: ctx.flash }));
+  });
+
+  router.post('/purchase-orders/:id/lines', async (req, res, ctx) => {
+    const form = await parseForm(req);
+    const product = db.prepare('SELECT * FROM products WHERE id = ?').get(form.product_id);
+    db.prepare('INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, quantity_ordered, unit_id, unit_price) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id('pol'), ctx.params.id, form.product_id, parseFloat(form.quantity), product.unit_id, form.unit_price ? parseFloat(form.unit_price) * 100 : null);
+    res.redirect(`/purchase-orders/${ctx.params.id}`, { type: 'ok', message: 'Ligne ajoutee a la commande.' });
   });
 
   router.post('/purchase-orders/:id/receive-line', async (req, res, ctx) => {
