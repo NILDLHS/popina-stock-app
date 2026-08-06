@@ -5,6 +5,36 @@ const { layout, syncStatusBadge, siteTypeBadge } = require('../lib/render');
 const { esc, id, parseForm, readBody } = require('../lib/util');
 const popina = require('../lib/popina');
 
+// Envoie un vrai webhook signe (HMAC) a notre propre endpoint, exactement comme le ferait Popina.
+// Utilise par le simulateur pour tester order.paid et order.canceled de bout en bout.
+function sendLocalWebhook(popinaSite, eventType, webhookMetaId, dataPayload) {
+  const payload = { meta: { id: webhookMetaId, event: eventType, emittedAt: new Date().toISOString() }, data: dataPayload };
+  const raw = JSON.stringify(payload);
+  const signature = popina.computeHmac(raw, popinaSite.webhook_secret);
+  const http = require('node:http');
+  return new Promise((resolve) => {
+    const reqOpts = {
+      hostname: '127.0.0.1', port: process.env.PORT || 3000, path: `/webhooks/popina/${popinaSite.id}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(raw),
+        'x-popina-webhook-event': eventType,
+        'x-popina-webhook-id': webhookMetaId,
+        'x-popina-hmac-signature': signature,
+      },
+    };
+    const r = http.request(reqOpts, (resp) => {
+      let body = '';
+      resp.on('data', (c) => body += c);
+      resp.on('end', () => resolve({ status: resp.statusCode, body }));
+    });
+    r.on('error', (e) => resolve({ status: 0, body: e.message }));
+    r.write(raw);
+    r.end();
+  });
+}
+
 function register(router) {
   // ---- Configuration des sites connectes a Popina ----
   router.get('/popina/sites', (req, res, ctx) => {
@@ -178,6 +208,16 @@ function register(router) {
           `}
         </form>
       </div>
+      ${ctx.query.last_order ? `
+      <div class="panel">
+        <h2>Tester une annulation</h2>
+        <p class="hint muted">Envoie un webhook <code>order.canceled</code> pour la derniere commande simulee (<span class="mono">${esc(ctx.query.last_order)}</span>) : si elle avait decremente du stock, ce stock doit etre recredite.</p>
+        <form method="POST" action="/popina/simulate/cancel">
+          <input type="hidden" name="popina_site_id" value="${selectedId || ''}" />
+          <input type="hidden" name="order_id" value="${esc(ctx.query.last_order)}" />
+          <button class="btn btn-secondary" type="submit">Envoyer le webhook order.canceled simule</button>
+        </form>
+      </div>` : ''}
     `;
     res.end(layout({ title: 'Popina - Simulateur', activePath: '/popina/mapping', body, flash: ctx.flash }));
   });
@@ -186,58 +226,44 @@ function register(router) {
     const form = await parseForm(req);
     const popinaSite = popina.getPopinaSite(form.popina_site_id);
     const orderId = crypto.randomUUID();
-    const payload = {
-      meta: { id: crypto.randomUUID(), event: 'order.paid', emittedAt: new Date().toISOString() },
-      data: {
-        id: orderId,
-        locationId: popinaSite.popina_location_id,
+    const result = await sendLocalWebhook(popinaSite, 'order.paid', crypto.randomUUID(), {
+      id: orderId,
+      locationId: popinaSite.popina_location_id,
+      isCanceled: false,
+      isTransferred: false,
+      productRowList: [{
+        id: crypto.randomUUID(),
+        name: 'Article simule',
         isCanceled: false,
-        isTransferred: false,
-        productRowList: [{
-          id: crypto.randomUUID(),
-          name: 'Article simule',
-          isCanceled: false,
-          quantity: parseFloat(form.quantity) || 1,
-          weight: null,
-          productCatalogId: form.popina_product_catalog_id,
-          stockImpactIndicator: true,
-          isLoss: form.is_loss === '1',
-          lossReason: form.is_loss === '1' ? 'Simulation - demarque' : null,
-        }],
-        menuRowList: [],
-        paymentRowList: [],
-      },
-    };
-    const raw = JSON.stringify(payload);
-    const signature = popina.computeHmac(raw, popinaSite.webhook_secret);
+        quantity: parseFloat(form.quantity) || 1,
+        weight: null,
+        productCatalogId: form.popina_product_catalog_id,
+        stockImpactIndicator: true,
+        isLoss: form.is_loss === '1',
+        lossReason: form.is_loss === '1' ? 'Simulation - demarque' : null,
+      }],
+      menuRowList: [],
+      paymentRowList: [],
+    });
 
-    // Appel HTTP local reel vers notre propre endpoint webhook, comme le ferait Popina.
-    const http = require('node:http');
-    const result = await new Promise((resolve) => {
-      const reqOpts = {
-        hostname: '127.0.0.1', port: process.env.PORT || 3000, path: `/webhooks/popina/${popinaSite.id}`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(raw),
-          'x-popina-webhook-event': 'order.paid',
-          'x-popina-webhook-id': payload.meta.id,
-          'x-popina-hmac-signature': signature,
-        },
-      };
-      const r = http.request(reqOpts, (resp) => {
-        let body = '';
-        resp.on('data', (c) => body += c);
-        resp.on('end', () => resolve({ status: resp.statusCode, body }));
-      });
-      r.on('error', (e) => resolve({ status: 0, body: e.message }));
-      r.write(raw);
-      r.end();
+    res.redirect(`/popina/simulate?site=${form.popina_site_id}&last_order=${orderId}`, {
+      type: result.status === 200 ? 'ok' : 'danger',
+      message: `Webhook envoye (HTTP ${result.status}) : ${result.body}`,
+    });
+  });
+
+  router.post('/popina/simulate/cancel', async (req, res) => {
+    const form = await parseForm(req);
+    const popinaSite = popina.getPopinaSite(form.popina_site_id);
+    const result = await sendLocalWebhook(popinaSite, 'order.canceled', crypto.randomUUID(), {
+      id: form.order_id,
+      locationId: popinaSite.popina_location_id,
+      isCanceled: true,
     });
 
     res.redirect(`/popina/simulate?site=${form.popina_site_id}`, {
       type: result.status === 200 ? 'ok' : 'danger',
-      message: `Webhook envoye (HTTP ${result.status}) : ${result.body}`,
+      message: `Webhook order.canceled envoye (HTTP ${result.status}) : ${result.body}`,
     });
   });
 
@@ -279,8 +305,12 @@ function register(router) {
         const result = popina.handleOrderPaid(popinaSite, payload.data, webhookId);
         res.statusCode = 200;
         return res.end(JSON.stringify({ status: 'ok', ...result }));
+      } else if (eventType === 'order.canceled') {
+        const result = popina.handleOrderCanceled(popinaSite, payload.data, webhookId);
+        res.statusCode = 200;
+        return res.end(JSON.stringify({ status: 'ok', ...result }));
       } else {
-        popina.logSync(popinaSite.id, eventType || 'unknown', webhookId, 'IGNORED', 'Evenement non traite par cette V1 (order.canceled/order.call a implementer si besoin).');
+        popina.logSync(popinaSite.id, eventType || 'unknown', webhookId, 'IGNORED', 'Evenement non traite par cette V1 (order.call a implementer si besoin).');
         res.statusCode = 200;
         return res.end(JSON.stringify({ status: 'ignored' }));
       }
