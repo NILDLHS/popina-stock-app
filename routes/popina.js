@@ -30,6 +30,7 @@ function register(router) {
               <strong>${esc(c.site_name)}</strong> ${c.is_active ? '<span class="badge badge-green">Actif</span>' : '<span class="badge badge-gray">Inactif</span>'}
               <div class="muted mono" style="font-size:12px;margin-top:4px">Location Popina : ${esc(c.popina_location_id)}</div>
               <div class="muted mono" style="font-size:12px">URL webhook a renseigner cote Popina :<br/>https://${esc(host)}/webhooks/popina/${c.id}</div>
+              <div class="muted mono" style="font-size:12px">Secret HMAC a renseigner cote Popina :<br/>${esc(c.webhook_secret)}</div>
               <div style="margin-top:6px"><a href="/popina/mapping?site=${c.id}">Gerer le mapping produits &rarr;</a> &middot; <a href="/popina/simulate?site=${c.id}">Simuler une vente &rarr;</a></div>
             </div>
           `).join('')}
