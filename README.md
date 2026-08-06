@@ -44,11 +44,12 @@ npm test
 | **Produits & recettes** | Matières premières / semi-finis / produits finis, nomenclature (BOM) — quantité d'ingrédient consommée par unité produite/vendue |
 | **Stock** | Niveau de stock par site, détail par lot avec DLC, ajustement d'inventaire, déclaration de perte |
 | **Fournisseurs** | Externes et internes (un site de production = un fournisseur pour les autres sites) |
-| **Commandes fournisseurs** | Création, réception partielle/totale (incrémente le stock avec numéro de lot et DLC) |
+| **Commandes fournisseurs** | Création, ajout de lignes supplémentaires, réception partielle/totale (incrémente le stock avec numéro de lot et DLC) |
 | **Production** | Ordre de fabrication : consomme automatiquement les matières premières selon la recette, produit un lot de produit fini |
 | **Transferts** | Brouillon → envoi (décrémente le site émetteur) → réception (incrémente le site destinataire), avec prix de cession optionnel |
-| **Mouvements** | Journal d'audit complet et immuable de tous les mouvements de stock |
-| **Popina** | Configuration des sites connectés, mapping produits, réception des webhooks, journal de synchro |
+| **Mouvements** | Journal d'audit complet et immuable de tous les mouvements de stock, export CSV |
+| **Popina** | Configuration des sites connectés, mapping produits (ajout/retrait), réception des webhooks, journal de synchro |
+| **Import CSV** | Import en masse (sites, produits, stock initial), export/sauvegarde complète de la base (fichier SQLite) |
 
 Le stock affiché est calculé à partir du **grand livre des mouvements** (`stock_movements`), pas seulement de la somme des lots : ça garantit que le stock reste cohérent même en cas de vente Popina dépassant le stock réellement connu (situation courante en démarrage, tant que le stock initial et les recettes ne sont pas parfaitement calés).
 
@@ -80,11 +81,12 @@ La page **Popina → Simuler une vente** (accessible depuis "Mapping") envoie un
 - `isLoss`/`lossReason` : tracé comme perte plutôt que comme vente
 - Produits Popina non mappés : n'interrompt pas le traitement, journalisé en statut `UNMAPPED` pour action corrective
 - Réponse toujours envoyée sous les 30s comme l'exige Popina
+- `order.canceled` : si la commande avait déjà décrémenté du stock (webhook `order.paid` reçu avant), les mouvements de vente correspondants sont automatiquement annulés (stock recrédité). Testable via *Popina → Simuler une vente*, qui propose un bouton d'annulation juste après une simulation.
 
 ### Ce qui n'est **pas** encore fait côté Popina
 
 - Appel réel à l'API REST Popina (catalogue, orders, reports) : le code de webhook est testé et fonctionnel, mais aucun appel sortant vers `api.pragma-project.dev` n'a pu être testé dans cet environnement (accès réseau restreint). Le mapping produit se fait donc manuellement pour l'instant plutôt que par import automatique du catalogue.
-- Gestion des événements `order.canceled` et `order.call` (reçus mais ignorés/journalisés, non traités)
+- Gestion de l'événement `order.call` (reçu mais ignoré/journalisé, non traité — utile pour un suivi live avant paiement)
 - Reconciliation automatique via l'endpoint Reports (rapprochement stock théorique/réel de fin de service)
 
 ## Proteger l'acces (avant tout hebergement partage)
