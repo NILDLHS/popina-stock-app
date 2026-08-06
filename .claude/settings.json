@@ -3,7 +3,19 @@
     "allow": [
       "Bash(npm test*)",
       "Bash(node --test test/*.test.js)",
-      "Bash(curl -s http://localhost:3000/*)"
+      "Bash(curl -s http://localhost:3000/*)",
+      "Bash(curl -s -i http://localhost:3000/*)",
+      "Bash(curl -s -i -X POST http://localhost:3000/*)",
+      "Bash(npm run reset-db)",
+      "Bash(npm run seed)",
+      "Bash(node server.js)",
+      "Bash(lsof -ti:3000)",
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(git push origin main)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)"
     ]
   }
 }

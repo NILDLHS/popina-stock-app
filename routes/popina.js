@@ -113,9 +113,19 @@ function register(router) {
           <h2>Mapping actuel (${mappings.length})</h2>
           ${mappings.length === 0 ? '<p class="empty">Aucun mapping.</p>' : `
           <table class="compact">
-            <thead><tr><th>Produit Popina</th><th>ID catalogue Popina</th><th>Produit interne</th></tr></thead>
+            <thead><tr><th>Produit Popina</th><th>ID catalogue Popina</th><th>Produit interne</th><th></th></tr></thead>
             <tbody>
-              ${mappings.map((m) => `<tr><td>${esc(m.popina_product_name || '-')}</td><td class="mono">${esc(m.popina_product_catalog_id)}</td><td>${m.internal_name ? esc(m.internal_name) : '<span class="badge badge-orange">Non mappe</span>'}</td></tr>`).join('')}
+              ${mappings.map((m) => `
+                <tr>
+                  <td>${esc(m.popina_product_name || '-')}</td>
+                  <td class="mono">${esc(m.popina_product_catalog_id)}</td>
+                  <td>${m.internal_name ? esc(m.internal_name) : '<span class="badge badge-orange">Non mappe</span>'}</td>
+                  <td>
+                    <form method="POST" action="/popina/mapping/${m.id}/delete" onsubmit="return confirm('Retirer ce mapping ?');">
+                      <button class="btn btn-danger btn-sm" type="submit">Retirer</button>
+                    </form>
+                  </td>
+                </tr>`).join('')}
             </tbody>
           </table>`}
         </div>
@@ -142,6 +152,13 @@ function register(router) {
       ON CONFLICT(popina_site_id, popina_product_catalog_id) DO UPDATE SET product_id = excluded.product_id, popina_product_name = excluded.popina_product_name
     `).run(id('map'), form.popina_site_id, form.popina_product_catalog_id, form.popina_product_name || null, form.product_id);
     res.redirect(`/popina/mapping?site=${form.popina_site_id}`, { type: 'ok', message: 'Mapping enregistre.' });
+  });
+
+  router.post('/popina/mapping/:mappingId/delete', (req, res, ctx) => {
+    const mapping = db.prepare('SELECT * FROM popina_product_mapping WHERE id = ?').get(ctx.params.mappingId);
+    if (!mapping) { res.statusCode = 404; return res.end('Mapping introuvable'); }
+    db.prepare('DELETE FROM popina_product_mapping WHERE id = ?').run(mapping.id);
+    res.redirect(`/popina/mapping?site=${mapping.popina_site_id}`, { type: 'ok', message: 'Mapping retire.' });
   });
 
   // ---- Journal de synchro ----

@@ -108,9 +108,18 @@ function register(router) {
           <h2>Nomenclature / recette (BOM)</h2>
           ${recipe.length === 0 ? '<p class="empty">Aucune recette : ce produit est consomme directement (article de revente simple).</p>' : `
           <table class="compact">
-            <thead><tr><th>Ingredient</th><th>Quantite par unite produite/vendue</th></tr></thead>
+            <thead><tr><th>Ingredient</th><th>Quantite par unite produite/vendue</th><th></th></tr></thead>
             <tbody>
-              ${recipe.map((r) => `<tr><td>${esc(r.ingredient_name)} <span class="mono muted">(${esc(r.ingredient_sku)})</span></td><td class="mono">${fmtQty(r.quantity)} ${r.unit_code}</td></tr>`).join('')}
+              ${recipe.map((r) => `
+                <tr>
+                  <td>${esc(r.ingredient_name)} <span class="mono muted">(${esc(r.ingredient_sku)})</span></td>
+                  <td class="mono">${fmtQty(r.quantity)} ${r.unit_code}</td>
+                  <td>
+                    <form method="POST" action="/products/${product.id}/recipe/${r.id}/delete" onsubmit="return confirm('Retirer ${esc(r.ingredient_name).replace(/'/g, "\\'")} de la recette ?');">
+                      <button class="btn btn-danger btn-sm" type="submit">Retirer</button>
+                    </form>
+                  </td>
+                </tr>`).join('')}
             </tbody>
           </table>`}
           ${product.type === 'RAW' ? '<p class="hint muted" style="margin-top:10px">Les matieres premieres ne portent pas de recette : elles sont elles-memes des ingredients.</p>' : `
@@ -152,6 +161,11 @@ function register(router) {
     db.prepare('INSERT INTO recipe_items (id, product_id, ingredient_product_id, quantity, unit_id) VALUES (?, ?, ?, ?, ?)')
       .run(id('ri'), ctx.params.id, form.ingredient_product_id, parseFloat(form.quantity), form.unit_id);
     res.redirect(`/products/${ctx.params.id}`, { type: 'ok', message: 'Ingredient ajoute a la recette.' });
+  });
+
+  router.post('/products/:id/recipe/:itemId/delete', (req, res, ctx) => {
+    db.prepare('DELETE FROM recipe_items WHERE id = ? AND product_id = ?').run(ctx.params.itemId, ctx.params.id);
+    res.redirect(`/products/${ctx.params.id}`, { type: 'ok', message: 'Ingredient retire de la recette.' });
   });
 
   router.post('/products/:id/toggle-active', (req, res, ctx) => {
