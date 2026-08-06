@@ -1,3 +1,6 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const db = require('../lib/db');
 const { getTenantId } = require('../lib/tenant');
 const { layout } = require('../lib/render');
@@ -86,8 +89,28 @@ function register(router) {
           </div>`;
         }).join('')}
       </div>
+      <div class="panel">
+        <h2>Sauvegarde</h2>
+        <p class="hint muted">Telecharge une copie complete et coherente de la base de donnees (fichier SQLite), a conserver en lieu sur. Le disque persistant protege des redemarrages mais pas d'une suppression accidentelle du service.</p>
+        <a href="/import/backup.db" class="btn btn-secondary">&darr; Telecharger une sauvegarde de la base</a>
+      </div>
     `;
     res.end(layout({ title: 'Import CSV', activePath: '/import', body, flash: ctx.flash }));
+  });
+
+  router.get('/import/backup.db', (req, res) => {
+    const tmpPath = path.join(os.tmpdir(), `popina-backup-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    try {
+      db.exec(`VACUUM INTO '${tmpPath.replace(/'/g, "''")}'`);
+    } catch (err) {
+      res.statusCode = 500;
+      return res.end('Sauvegarde impossible : ' + err.message);
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="popina-stock-backup-${new Date().toISOString().slice(0, 10)}.db"`);
+    const stream = fs.createReadStream(tmpPath);
+    stream.pipe(res);
+    stream.on('close', () => fs.unlink(tmpPath, () => {}));
   });
 
   router.get('/import/template/:key.csv', (req, res, ctx) => {
