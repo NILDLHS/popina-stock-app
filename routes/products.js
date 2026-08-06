@@ -6,9 +6,10 @@ const stock = require('../lib/stock');
 
 function register(router) {
   router.get('/products', (req, res, ctx) => {
-    const products = db.prepare(`
-      SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id = p.unit_id ORDER BY p.type, p.name
-    `).all();
+    const q = (ctx.query.q || '').trim();
+    const products = q
+      ? db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id = p.unit_id WHERE p.name LIKE ? OR p.sku LIKE ? ORDER BY p.type, p.name`).all(`%${q}%`, `%${q}%`)
+      : db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id = p.unit_id ORDER BY p.type, p.name`).all();
     const units = db.prepare('SELECT * FROM units').all();
 
     const body = `
@@ -17,6 +18,9 @@ function register(router) {
       </div>
       <div class="grid grid-2">
         <div class="panel">
+          <form method="GET" action="/products" class="field" style="max-width:320px">
+            <input name="q" placeholder="Rechercher par nom ou SKU..." value="${esc(q)}" />
+          </form>
           <h2>Catalogue (${products.length})</h2>
           <table class="compact">
             <thead><tr><th>SKU</th><th>Nom</th><th>Type</th><th>Categorie</th><th>Unite</th><th>Statut</th><th></th><th></th></tr></thead>

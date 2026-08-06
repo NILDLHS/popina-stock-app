@@ -6,13 +6,19 @@ const stockLib = require('../lib/stock');
 
 function register(router) {
   router.get('/sites', (req, res, ctx) => {
-    const sites = db.prepare('SELECT * FROM sites ORDER BY type, name').all();
+    const q = (ctx.query.q || '').trim();
+    const sites = q
+      ? db.prepare('SELECT * FROM sites WHERE name LIKE ? ORDER BY type, name').all(`%${q}%`)
+      : db.prepare('SELECT * FROM sites ORDER BY type, name').all();
     const body = `
       <div class="page-header">
         <div><h1>Sites</h1><p class="subtitle">Magasins, points de production, franchises et clients externes</p></div>
       </div>
       <div class="grid grid-2">
         <div class="panel">
+          <form method="GET" action="/sites" class="field" style="max-width:320px">
+            <input name="q" placeholder="Rechercher un site..." value="${esc(q)}" />
+          </form>
           <h2>Liste des sites (${sites.length})</h2>
           <table>
             <thead><tr><th>Nom</th><th>Type</th><th>Adresse</th><th>Statut</th><th></th></tr></thead>
