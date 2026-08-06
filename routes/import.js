@@ -1,13 +1,10 @@
 const db = require('../lib/db');
+const { getTenantId } = require('../lib/tenant');
 const { layout } = require('../lib/render');
 const { esc, readBody } = require('../lib/util');
 const { parseCsvRecords, toCsv } = require('../lib/csv');
 const { parseMultipart } = require('../lib/multipart');
 const importer = require('../lib/importer');
-
-function getTenantId() {
-  return db.prepare('SELECT id FROM tenants LIMIT 1').get()?.id;
-}
 
 const TEMPLATES = {
   sites: {

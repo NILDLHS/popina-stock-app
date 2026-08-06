@@ -1,12 +1,9 @@
 const crypto = require('node:crypto');
 const db = require('../lib/db');
+const { getTenantId } = require('../lib/tenant');
 const { layout, syncStatusBadge, siteTypeBadge } = require('../lib/render');
 const { esc, id, parseForm, readBody } = require('../lib/util');
 const popina = require('../lib/popina');
-
-function getTenantId() {
-  return db.prepare('SELECT id FROM tenants LIMIT 1').get()?.id;
-}
 
 function register(router) {
   // ---- Configuration des sites connectes a Popina ----

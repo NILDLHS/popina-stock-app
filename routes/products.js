@@ -1,11 +1,8 @@
 const db = require('../lib/db');
+const { getTenantId } = require('../lib/tenant');
 const { layout, productTypeBadge } = require('../lib/render');
 const { esc, id, parseForm, fmtQty } = require('../lib/util');
 const stock = require('../lib/stock');
-
-function getTenantId() {
-  return db.prepare('SELECT id FROM tenants LIMIT 1').get()?.id;
-}
 
 function register(router) {
   router.get('/products', (req, res, ctx) => {
