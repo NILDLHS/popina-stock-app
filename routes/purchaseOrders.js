@@ -1,26 +1,65 @@
 const db = require('../lib/db');
 const { getTenantId } = require('../lib/tenant');
 const { layout, statusBadge } = require('../lib/render');
-const { esc, id, parseForm, fmtQty, fmtDate } = require('../lib/util');
+const { esc, id, parseForm, fmtQty, fmtDate, getCookie, setCookie } = require('../lib/util');
 const stockLib = require('../lib/stock');
 
 function register(router) {
   router.get('/purchase-orders', (req, res, ctx) => {
+    const supplierFilter = ctx.query.supplier || '';
     const pos = db.prepare(`
       SELECT po.*, sup.name as supplier_name, s.name as site_name
       FROM purchase_orders po
       JOIN suppliers sup ON sup.id = po.supplier_id
       JOIN sites s ON s.id = po.site_id
+      ${supplierFilter ? 'WHERE po.supplier_id = ?' : ''}
       ORDER BY po.created_at DESC
-    `).all();
+    `).all(...(supplierFilter ? [supplierFilter] : []));
     const suppliers = db.prepare('SELECT * FROM suppliers ORDER BY name').all();
     const sites = db.prepare('SELECT * FROM sites WHERE is_active = 1 ORDER BY name').all();
     const products = db.prepare('SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id=p.unit_id WHERE p.is_active = 1 ORDER BY p.name').all();
 
+    // Vue "a preparer" : quand un fournisseur est filtre, total restant a livrer par produit,
+    // tous statuts en cours confondus - utile pour un labo qui recoit les commandes de plusieurs boutiques.
+    const toPrepare = supplierFilter ? db.prepare(`
+      SELECT p.name as product_name, u.code as unit_code, SUM(pol.quantity_ordered - pol.quantity_received) as total
+      FROM purchase_order_lines pol
+      JOIN purchase_orders po ON po.id = pol.purchase_order_id
+      JOIN products p ON p.id = pol.product_id
+      JOIN units u ON u.id = pol.unit_id
+      WHERE po.supplier_id = ? AND po.status IN ('SENT','PARTIAL') AND pol.quantity_received < pol.quantity_ordered
+      GROUP BY p.id
+      ORDER BY total DESC
+    `).all(supplierFilter) : [];
+
     const body = `
       <div class="page-header">
         <div><h1>Commandes fournisseurs</h1><p class="subtitle">Approvisionnement externe et interne (un site de production = un fournisseur pour les autres sites)</p></div>
+        <a href="/purchase-orders/quick" class="btn">Commande rapide multi-produits &rarr;</a>
       </div>
+      <div class="panel">
+        <form method="GET" action="/purchase-orders" class="form-row" style="max-width:320px;align-items:flex-end">
+          <div class="field" style="margin-bottom:0">
+            <label>Filtrer par fournisseur</label>
+            <select name="supplier" onchange="this.form.submit()">
+              <option value="">Tous les fournisseurs</option>
+              ${suppliers.map((s) => `<option value="${s.id}" ${s.id === supplierFilter ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+            </select>
+          </div>
+        </form>
+      </div>
+      ${supplierFilter ? `
+      <div class="panel">
+        <h2>Total a preparer (${toPrepare.length})</h2>
+        <p class="hint muted">Cumul de toutes les commandes en cours (envoyees ou partiellement recues) pour ce fournisseur - utile pour planifier une production ou un chargement en une fois.</p>
+        ${toPrepare.length === 0 ? '<p class="empty">Rien en attente pour ce fournisseur.</p>' : `
+        <table class="compact">
+          <thead><tr><th>Produit</th><th>Quantite totale restante</th></tr></thead>
+          <tbody>
+            ${toPrepare.map((t) => `<tr><td>${esc(t.product_name)}</td><td class="mono">${fmtQty(t.total)} ${t.unit_code}</td></tr>`).join('')}
+          </tbody>
+        </table>`}
+      </div>` : ''}
       <div class="panel">
         <h2>Commandes (${pos.length})</h2>
         ${pos.length === 0 ? '<p class="empty">Aucune commande.</p>' : `
@@ -40,7 +79,7 @@ function register(router) {
         </table>`}
       </div>
       <div class="panel">
-        <h2>Nouvelle commande</h2>
+        <h2>Nouvelle commande (une ligne)</h2>
         <form method="POST" action="/purchase-orders">
           <div class="form-row">
             <div class="field"><label>Fournisseur</label><select name="supplier_id" required>${suppliers.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
@@ -49,8 +88,8 @@ function register(router) {
           <div class="field"><label>Produit</label><select name="product_id" required>${products.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit_code)})</option>`).join('')}</select></div>
           <div class="field"><label>Quantite commandee</label><input name="quantity" type="number" step="0.0001" required /></div>
           <div class="field"><label>Prix unitaire (optionnel, en euros)</label><input name="unit_price" type="number" step="0.01" /></div>
-          <p class="hint muted">Pour ajouter plusieurs lignes a la meme commande, cree-la puis reviens l'ouvrir pour ajouter des lignes.</p>
-          <button class="btn" type="submit">Creer la commande</button>
+          <p class="hint muted">Pour commander plusieurs produits d'un coup (cas d'une boutique qui reapprovisionne son labo au quotidien), utilisez plutot la <a href="/purchase-orders/quick">commande rapide</a>.</p>
+          <button class="btn btn-secondary" type="submit">Creer la commande</button>
         </form>
       </div>
     `;
@@ -67,6 +106,113 @@ function register(router) {
     db.prepare('INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, quantity_ordered, unit_id, unit_price) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id('pol'), poId, form.product_id, parseFloat(form.quantity), product.unit_id, form.unit_price ? parseFloat(form.unit_price) * 100 : null);
     res.redirect(`/purchase-orders/${poId}`, { type: 'ok', message: 'Commande fournisseur creee et envoyee.' });
+  });
+
+  // ---- Commande rapide : une seule page pour commander des dizaines de produits en une fois ----
+  // (cas d'usage : une boutique reapprovisionne quotidiennement son labo/fournisseur interne)
+  router.get('/purchase-orders/quick', (req, res, ctx) => {
+    const sites = db.prepare('SELECT * FROM sites WHERE is_active = 1 ORDER BY name').all();
+    const suppliers = db.prepare('SELECT * FROM suppliers ORDER BY name').all();
+    const siteId = ctx.query.site || getCookie(req, 'default_site') || sites.find((s) => s.type === 'STORE' || s.type === 'FRANCHISEE')?.id || sites[0]?.id;
+    if (ctx.query.site) setCookie(res, 'default_site', ctx.query.site);
+    const supplierId = ctx.query.supplier || (suppliers.length === 1 ? suppliers[0].id : '');
+    const q = (ctx.query.q || '').trim();
+
+    const products = q
+      ? db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id=p.unit_id WHERE p.is_active = 1 AND (p.name LIKE ? OR p.sku LIKE ?) ORDER BY p.name`).all(`%${q}%`, `%${q}%`)
+      : db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id=p.unit_id WHERE p.is_active = 1 ORDER BY p.name`).all();
+    const thresholds = new Map(
+      db.prepare('SELECT * FROM stock_thresholds WHERE site_id = ?').all(siteId).map((t) => [t.product_id, t.min_quantity])
+    );
+
+    const rows = products.map((p) => {
+      const currentQty = siteId ? stockLib.getProductStockAtSite(siteId, p.id) : 0;
+      const threshold = thresholds.get(p.id);
+      const suggested = threshold !== undefined && currentQty < threshold ? threshold - currentQty : null;
+      return { ...p, currentQty, threshold, suggested };
+    });
+
+    const body = `
+      <div class="page-header">
+        <div><h1>Commande rapide</h1><p class="subtitle">Reapprovisionnement multi-produits en une seule soumission - pense pour une commande quotidienne d'une boutique vers son laboratoire.</p></div>
+        <a href="/purchase-orders" class="btn btn-secondary">&larr; Retour</a>
+      </div>
+      <div class="panel">
+        <form method="GET" action="/purchase-orders/quick" class="form-row" style="align-items:flex-end">
+          <div class="field" style="margin-bottom:0">
+            <label>Site (boutique)</label>
+            <select name="site" onchange="this.form.submit()">
+              ${sites.map((s) => `<option value="${s.id}" ${s.id === siteId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label>Fournisseur</label>
+            <select name="supplier" onchange="this.form.submit()">
+              <option value="">Choisir...</option>
+              ${suppliers.map((s) => `<option value="${s.id}" ${s.id === supplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;flex:2">
+            <label>Rechercher un produit</label>
+            <input name="q" value="${esc(q)}" placeholder="Filtrer la liste par nom ou SKU..." />
+          </div>
+          <button class="btn btn-secondary" type="submit">Filtrer</button>
+        </form>
+      </div>
+      ${!supplierId ? '<div class="alert alert-warn">Choisissez un fournisseur pour pouvoir envoyer la commande.</div>' : ''}
+      <div class="panel">
+        <form method="POST" action="/purchase-orders/quick">
+          <input type="hidden" name="site_id" value="${siteId || ''}" />
+          <input type="hidden" name="supplier_id" value="${supplierId || ''}" />
+          <table class="compact">
+            <thead><tr><th>Produit</th><th>Stock actuel</th><th>Seuil</th><th>Quantite a commander</th></tr></thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr>
+                  <td>${esc(r.name)} <span class="mono muted">(${esc(r.sku)})</span></td>
+                  <td class="mono" style="${r.currentQty <= 0 ? 'color:var(--danger)' : ''}">${fmtQty(r.currentQty)} ${r.unit_code}</td>
+                  <td class="mono muted">${r.threshold !== undefined ? fmtQty(r.threshold) + ' ' + r.unit_code : '-'}</td>
+                  <td><input name="qty_${r.id}" type="number" step="0.0001" min="0" value="${r.suggested ? fmtQty(r.suggested).replace(/\s/g, '').replace(',', '.') : ''}" placeholder="0" style="max-width:140px" /></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          ${rows.length === 0 ? '<p class="empty">Aucun produit ne correspond a la recherche.</p>' : `
+          <div style="margin-top:16px"><button class="btn" type="submit" ${!supplierId ? 'disabled' : ''}>Envoyer la commande</button></div>`}
+        </form>
+      </div>
+    `;
+    res.end(layout({ title: 'Commande rapide', activePath: '/purchase-orders', body, flash: ctx.flash }));
+  });
+
+  router.post('/purchase-orders/quick', async (req, res) => {
+    const form = await parseForm(req);
+    const tenantId = getTenantId();
+    const products = db.prepare('SELECT * FROM products WHERE is_active = 1').all();
+    const byId = new Map(products.map((p) => [p.id, p]));
+
+    const lines = [];
+    for (const [key, value] of Object.entries(form)) {
+      if (!key.startsWith('qty_')) continue;
+      const qty = parseFloat(value);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+      const product = byId.get(key.slice(4));
+      if (!product) continue;
+      lines.push({ product, qty });
+    }
+
+    if (lines.length === 0) {
+      return res.redirect(`/purchase-orders/quick?site=${form.site_id}&supplier=${form.supplier_id}`, { type: 'danger', message: 'Aucune quantite renseignee : rien a commander.' });
+    }
+
+    const poId = id('po');
+    db.prepare('INSERT INTO purchase_orders (id, tenant_id, supplier_id, site_id, status) VALUES (?, ?, ?, ?, ?)')
+      .run(poId, tenantId, form.supplier_id, form.site_id, 'SENT');
+    for (const { product, qty } of lines) {
+      db.prepare('INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, quantity_ordered, unit_id) VALUES (?, ?, ?, ?, ?)')
+        .run(id('pol'), poId, product.id, qty, product.unit_id);
+    }
+
+    res.redirect(`/purchase-orders/${poId}`, { type: 'ok', message: `Commande envoyee avec ${lines.length} produit(s).` });
   });
 
   router.get('/purchase-orders/:id', (req, res, ctx) => {
@@ -153,6 +299,19 @@ function register(router) {
       lotNumber: form.lot_number || undefined, expiryDate: form.expiry_date || null,
       sourceType: 'purchase_order', sourceRef: po.id,
     });
+
+    // Fournisseur interne (ex: laboratoire de production) : la marchandise recue par la boutique
+    // doit aussi quitter le stock du site fournisseur, sinon elle "apparait" sans jamais avoir
+    // ete decomptee cote labo. allowNegative pour ne jamais bloquer la reception boutique.
+    const supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(po.supplier_id);
+    if (supplier?.is_internal && supplier.internal_site_id) {
+      stockLib.consumeStockFIFO({
+        tenantId, siteId: supplier.internal_site_id, productId: line.product_id, quantity: qty, unitId: line.unit_id,
+        type: 'TRANSFER_OUT', referenceType: 'purchase_order', referenceId: po.id,
+        note: `Expedition vers ${po.site_id} (commande ${po.id})`, relatedSiteId: po.site_id, allowNegative: true,
+      });
+    }
+
     db.prepare('UPDATE purchase_order_lines SET quantity_received = quantity_received + ? WHERE id = ?').run(qty, line.id);
 
     const allLines = db.prepare('SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?').all(po.id);
