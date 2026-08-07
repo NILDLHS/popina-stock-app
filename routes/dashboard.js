@@ -29,7 +29,10 @@ function register(router) {
           <h1>Tableau de bord</h1>
           <p class="subtitle">Vue consolidee du groupe (V1 mono-tenant, architecture prete pour du multi-tenant)</p>
         </div>
-        <a href="/import" class="btn btn-secondary">Importer des donnees (CSV) &rarr;</a>
+        <div class="tag-row">
+          <a href="/purchase-orders/quick" class="btn">Commande rapide &rarr;</a>
+          <a href="/import" class="btn btn-secondary">Importer des donnees (CSV) &rarr;</a>
+        </div>
       </div>
 
       <div class="grid grid-4">
