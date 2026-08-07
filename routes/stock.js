@@ -1,13 +1,14 @@
 const db = require('../lib/db');
 const { getTenantId } = require('../lib/tenant');
 const { layout } = require('../lib/render');
-const { esc, parseForm, fmtQty, fmtDate, id, daysUntil } = require('../lib/util');
+const { esc, parseForm, fmtQty, fmtDate, id, daysUntil, getCookie, setCookie } = require('../lib/util');
 const stockLib = require('../lib/stock');
 
 function register(router) {
   router.get('/stock', (req, res, ctx) => {
     const sites = db.prepare('SELECT * FROM sites ORDER BY type, name').all();
-    const siteId = ctx.query.site || sites[0]?.id;
+    const siteId = ctx.query.site || getCookie(req, 'default_site') || sites[0]?.id;
+    if (ctx.query.site) setCookie(res, 'default_site', ctx.query.site);
     const site = sites.find((s) => s.id === siteId);
     const rows = site ? stockLib.getStockBySite(siteId) : [];
 
@@ -58,6 +59,7 @@ function register(router) {
     if (!site || !product) { res.statusCode = 404; return res.end('Introuvable'); }
     const lots = stockLib.listLots(siteId, productId);
     const currentQty = stockLib.getProductStockAtSite(siteId, productId);
+    const threshold = db.prepare('SELECT * FROM stock_thresholds WHERE site_id = ? AND product_id = ?').get(siteId, productId);
 
     const body = `
       <div class="page-header">
@@ -92,6 +94,15 @@ function register(router) {
             <div class="field"><label>Quantite perdue</label><input name="quantity" type="number" step="0.0001" required /></div>
             <div class="field"><label>Motif</label><input name="reason" placeholder="Ex: casse, peremption" required /></div>
             <button class="btn btn-danger" type="submit">Declarer la perte</button>
+          </form>
+          <hr class="sep" />
+          <h3>Seuil d'alerte / reappro</h3>
+          <p class="hint muted">En dessous de ce seuil, le produit apparait dans les alertes rupture du tableau de bord et sa quantite est suggeree automatiquement sur l'ecran de commande rapide.</p>
+          <form method="POST" action="/stock/threshold">
+            <input type="hidden" name="site_id" value="${siteId}" />
+            <input type="hidden" name="product_id" value="${productId}" />
+            <div class="field"><label>Seuil (unite: ${esc(product.unit_code)})</label><input name="min_quantity" type="number" step="0.0001" value="${threshold ? threshold.min_quantity : ''}" placeholder="Ex: 5" required /></div>
+            <button class="btn btn-secondary" type="submit">Enregistrer le seuil</button>
           </form>
         </div>
       </div>
@@ -132,6 +143,15 @@ function register(router) {
       type: 'LOSS', referenceType: 'manual_loss', note: form.reason, allowNegative: true,
     });
     res.redirect(`/stock/lots?site=${form.site_id}&product=${form.product_id}`, { type: 'ok', message: 'Perte enregistree.' });
+  });
+
+  router.post('/stock/threshold', async (req, res) => {
+    const form = await parseForm(req);
+    db.prepare(`
+      INSERT INTO stock_thresholds (id, site_id, product_id, min_quantity) VALUES (?, ?, ?, ?)
+      ON CONFLICT(site_id, product_id) DO UPDATE SET min_quantity = excluded.min_quantity
+    `).run(id('thr'), form.site_id, form.product_id, parseFloat(form.min_quantity));
+    res.redirect(`/stock/lots?site=${form.site_id}&product=${form.product_id}`, { type: 'ok', message: 'Seuil enregistre.' });
   });
 }
 
