@@ -45,6 +45,7 @@ npm test
 | **Stock** | Niveau de stock par site, détail par lot avec DLC, ajustement d'inventaire, déclaration de perte |
 | **Fournisseurs** | Externes et internes (un site de production = un fournisseur pour les autres sites) |
 | **Commandes fournisseurs** | Création, ajout de lignes supplémentaires, réception partielle/totale (incrémente le stock avec numéro de lot et DLC) |
+| **Commande rapide** (`/purchase-orders/quick`) | Réapprovisionnement multi-produits en une seule soumission (cas d'une boutique qui commande chaque jour au labo) : stock actuel et seuil affichés par produit, quantité suggérée automatiquement |
 | **Production** | Ordre de fabrication : consomme automatiquement les matières premières selon la recette, produit un lot de produit fini |
 | **Transferts** | Brouillon → envoi (décrémente le site émetteur) → réception (incrémente le site destinataire), avec prix de cession optionnel |
 | **Mouvements** | Journal d'audit complet et immuable de tous les mouvements de stock, export CSV |
