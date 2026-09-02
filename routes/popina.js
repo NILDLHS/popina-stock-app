@@ -49,6 +49,11 @@ function register(router) {
         <div><h1>Sites connectes a Popina</h1><p class="subtitle">Un site Popina (location) = une cle API + un secret webhook dedie. Voir Annexe 9 du prompt pour le detail du modele d'authentification Popina.</p></div>
       </div>
       <div class="alert alert-info">L'API Popina reelle est actuellement <strong>en lecture seule (beta)</strong> : le catalogue et les niveaux de stock ne peuvent pas etre ecrits depuis cette app. Le decrement de stock se fait via les <strong>webhooks</strong> Popina (evenement <code>order.paid</code>), pas par appel API sortant.</div>
+      <div class="panel">
+        <h2>URL de webhook generale (une seule URL pour toutes les locations)</h2>
+        <p class="hint muted">Si votre interlocuteur Popina configure une seule URL de webhook par integration plutot qu'une par etablissement, utilisez celle-ci : le site interne est retrouve automatiquement via le <code>locationId</code> present dans chaque commande recue. Chaque site connecte garde son propre secret HMAC (visible sur sa fiche ci-dessous) : donnez a Popina le secret correspondant a chaque location.</p>
+        <div class="muted mono" style="font-size:12px">https://${esc(host)}/webhooks/popina</div>
+      </div>
       <div class="grid grid-2">
         <div class="panel">
           <h2>Sites configures (${configs.length})</h2>
@@ -303,16 +308,15 @@ function register(router) {
     });
   });
 
-  // ---- Webhook receiver reel (c'est cet endpoint qu'il faut configurer cote Popina) ----
-  router.post('/webhooks/popina/:popinaSiteId', async (req, res, ctx) => {
-    const popinaSite = popina.getPopinaSite(ctx.params.popinaSiteId);
+  // Traitement commun a l'endpoint par-site et a l'endpoint general : verification de signature,
+  // idempotence, dispatch par type d'evenement. `popinaSite` est deja resolu par l'appelant, et
+  // `raw` deja lu (le flux de la requete ne peut etre consomme qu'une seule fois).
+  function handleWebhookForSite(popinaSite, raw, req, res) {
     if (!popinaSite || !popinaSite.is_active) {
       res.statusCode = 404;
       return res.end(JSON.stringify({ error: 'Site Popina inconnu ou inactif' }));
     }
 
-    const rawBuf = await readBody(req);
-    const raw = rawBuf.toString('utf8');
     const signatureHeader = req.headers['x-popina-hmac-signature'];
     const webhookId = req.headers['x-popina-webhook-id'];
     const eventType = req.headers['x-popina-webhook-event'];
@@ -355,6 +359,40 @@ function register(router) {
       res.statusCode = 500;
       return res.end(JSON.stringify({ error: err.message }));
     }
+  }
+
+  // ---- Webhook receiver par site (une URL dediee par location, historique) ----
+  router.post('/webhooks/popina/:popinaSiteId', async (req, res, ctx) => {
+    const popinaSite = popina.getPopinaSite(ctx.params.popinaSiteId);
+    const raw = (await readBody(req)).toString('utf8');
+    return handleWebhookForSite(popinaSite, raw, req, res);
+  });
+
+  // ---- Webhook receiver general (une seule URL pour toutes les locations connectees) ----
+  // Certains comptes Popina n'exposent qu'une URL de webhook unique par integration, pas une par
+  // location. On identifie le site interne via le `locationId` present dans chaque payload
+  // (voir Annexe 9 : chaque commande porte le locationId de l'etablissement), avant verification
+  // de signature avec le secret propre a ce site.
+  router.post('/webhooks/popina', async (req, res) => {
+    const raw = (await readBody(req)).toString('utf8');
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (e) {
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ error: 'JSON invalide' }));
+    }
+    const locationId = payload?.data?.locationId;
+    if (!locationId) {
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ error: 'locationId manquant dans le payload : impossible de determiner le site.' }));
+    }
+    const popinaSite = popina.getPopinaSiteByLocationId(locationId);
+    if (!popinaSite) {
+      res.statusCode = 404;
+      return res.end(JSON.stringify({ error: `Aucun site connecte pour la location ${locationId}` }));
+    }
+    return handleWebhookForSite(popinaSite, raw, req, res);
   });
 }
 
