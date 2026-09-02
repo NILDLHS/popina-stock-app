@@ -68,6 +68,8 @@ Conformément à la doc officielle (`docs.pragma-project.dev`, résumée en Anne
 3. Aller sur **Popina → Mapping produits** et associer chaque `productCatalogId` du catalogue Popina à un produit interne (avec ou sans recette).
 4. Configurer ce même webhook (URL + secret) côté support Popina pour l'événement `order.paid`.
 
+**URL générale (multi-sites)** : certains comptes Popina n'exposent qu'une seule URL de webhook par intégration plutôt qu'une par établissement. Dans ce cas, utilisez `https://votre-domaine/webhooks/popina` (sans identifiant) — le site interne est retrouvé automatiquement via le `locationId` présent dans chaque commande reçue. Chaque site connecté garde son propre secret HMAC ; donnez à Popina le secret correspondant à chaque location.
+
 ### Tester sans compte Popina réel
 
 La page **Popina → Simuler une vente** (accessible depuis "Mapping") envoie un vrai webhook `order.paid`, correctement signé en HMAC-SHA256, vers l'endpoint local — exactement comme le ferait Popina. C'est le moyen de vérifier bout en bout que le décrément de stock fonctionne, sans avoir de terminal de caisse.
