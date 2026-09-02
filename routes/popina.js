@@ -59,6 +59,13 @@ function register(router) {
               <div class="muted mono" style="font-size:12px">URL webhook a renseigner cote Popina :<br/>https://${esc(host)}/webhooks/popina/${c.id}</div>
               <div class="muted mono" style="font-size:12px">Secret HMAC a renseigner cote Popina :<br/>${esc(c.webhook_secret)}</div>
               <div style="margin-top:6px"><a href="/popina/mapping?site=${c.id}">Gerer le mapping produits &rarr;</a> &middot; <a href="/popina/simulate?site=${c.id}">Simuler une vente &rarr;</a></div>
+              <details style="margin-top:8px">
+                <summary class="muted" style="cursor:pointer;font-size:12.5px">Remplacer le secret (si vous avez deja communique un ancien secret a Popina)</summary>
+                <form method="POST" action="/popina/sites/${c.id}/secret" style="margin-top:8px;max-width:420px">
+                  <div class="field"><input name="webhook_secret" placeholder="Coller l'ancien secret HMAC" required /></div>
+                  <button class="btn btn-secondary btn-sm" type="submit">Remplacer le secret</button>
+                </form>
+              </details>
             </div>
           `).join('')}
         </div>
@@ -86,6 +93,18 @@ function register(router) {
       VALUES (?, ?, ?, ?, ?, ?, 1)
     `).run(id('popsite'), tenantId, form.site_id, form.popina_location_id, form.api_key || null, secret);
     res.redirect('/popina/sites', { type: 'ok', message: 'Site Popina connecte. Configure le webhook cote Popina avec l\'URL affichee.' });
+  });
+
+  router.post('/popina/sites/:id/secret', async (req, res, ctx) => {
+    const form = await parseForm(req);
+    const popinaSite = db.prepare('SELECT * FROM popina_sites WHERE id = ?').get(ctx.params.id);
+    if (!popinaSite) { res.statusCode = 404; return res.end('Site Popina introuvable'); }
+    const secret = (form.webhook_secret || '').trim();
+    if (!secret) {
+      return res.redirect('/popina/sites', { type: 'danger', message: 'Secret vide, rien de change.' });
+    }
+    db.prepare('UPDATE popina_sites SET webhook_secret = ? WHERE id = ?').run(secret, popinaSite.id);
+    res.redirect('/popina/sites', { type: 'ok', message: `Secret remplace pour "${popinaSite.id}". Verifiez qu'il correspond bien a celui que Popina utilise avant de tester.` });
   });
 
   // ---- Mapping produit Popina <-> produit interne ----
