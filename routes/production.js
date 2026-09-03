@@ -59,15 +59,15 @@ function register(router) {
           </tbody>
         </table>`}
       </div>
-      <div class="panel">
+      <div class="panel" id="nouvel-ordre">
         <h2>Nouvel ordre de fabrication</h2>
         <form method="POST" action="/production">
           <div class="form-row">
             <div class="field"><label>Site de production</label><select name="site_id" required>${prodSites.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-            <div class="field"><label>Produit a fabriquer</label><select name="product_id" required>${finishedProducts.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit_code)})</option>`).join('')}</select></div>
+            <div class="field"><label>Produit a fabriquer</label><select name="product_id" required>${finishedProducts.map((p) => `<option value="${p.id}" ${p.id === suggestProduct ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit_code)})</option>`).join('')}</select></div>
           </div>
           <div class="form-row">
-            <div class="field"><label>Quantite a produire</label><input name="quantity" type="number" step="0.0001" required /></div>
+            <div class="field"><label>Quantite a produire</label><input name="quantity" type="number" step="0.0001" required value="${esc(suggestQty)}" /></div>
             <div class="field"><label>DLC du lot produit</label><input name="expiry_date" type="date" /></div>
           </div>
           <p class="hint muted">Les matieres premieres necessaires seront automatiquement decrementees selon la recette du produit (voir page produit). L'operation echoue si le stock est insuffisant.</p>
