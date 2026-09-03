@@ -167,13 +167,18 @@ function register(router) {
           <table class="compact">
             <thead><tr><th>Produit</th><th>Stock actuel</th><th>Seuil</th><th>Quantite a commander</th></tr></thead>
             <tbody>
-              ${rows.map((r) => `
+              ${rows.map((r) => {
+                const isPieces = r.unit_code === 'pieces';
+                const step = isPieces ? '1' : '0.0001';
+                const suggestedValue = r.suggested ? (isPieces ? Math.ceil(r.suggested) : r.suggested) : '';
+                return `
                 <tr>
                   <td>${esc(r.name)} <span class="mono muted">(${esc(r.sku)})</span></td>
                   <td class="mono" style="${r.currentQty <= 0 ? 'color:var(--danger)' : ''}">${fmtQty(r.currentQty)} ${r.unit_code}</td>
                   <td class="mono muted">${r.threshold !== undefined ? fmtQty(r.threshold) + ' ' + r.unit_code : '-'}</td>
-                  <td><input name="qty_${r.id}" type="number" step="0.0001" min="0" value="${r.suggested ? fmtQty(r.suggested).replace(/\s/g, '').replace(',', '.') : ''}" placeholder="0" style="max-width:140px" /></td>
-                </tr>`).join('')}
+                  <td><input name="qty_${r.id}" type="number" step="${step}" min="0" value="${suggestedValue}" placeholder="0" style="max-width:140px" /></td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
           ${rows.length === 0 ? '<p class="empty">Aucun produit ne correspond a la recherche.</p>' : `
@@ -187,16 +192,17 @@ function register(router) {
   router.post('/purchase-orders/quick', async (req, res) => {
     const form = await parseForm(req);
     const tenantId = getTenantId();
-    const products = db.prepare('SELECT * FROM products WHERE is_active = 1').all();
+    const products = db.prepare('SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id = p.unit_id WHERE p.is_active = 1').all();
     const byId = new Map(products.map((p) => [p.id, p]));
 
     const lines = [];
     for (const [key, value] of Object.entries(form)) {
       if (!key.startsWith('qty_')) continue;
-      const qty = parseFloat(value);
+      let qty = parseFloat(value);
       if (!Number.isFinite(qty) || qty <= 0) continue;
       const product = byId.get(key.slice(4));
       if (!product) continue;
+      if (product.unit_code === 'pieces') qty = Math.round(qty);
       lines.push({ product, qty });
     }
 
