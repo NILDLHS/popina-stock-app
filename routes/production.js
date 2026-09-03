@@ -13,10 +13,32 @@ function register(router) {
     `).all();
     const prodSites = db.prepare(`SELECT * FROM sites WHERE type = 'PRODUCTION' AND is_active = 1 ORDER BY name`).all();
     const finishedProducts = db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id=p.unit_id WHERE p.type IN ('FINISHED','SEMI') AND p.is_active = 1 ORDER BY p.name`).all();
+    const tenantId = getTenantId();
+    const suggestions = stockLib.getProductionSuggestions(tenantId);
+    const suggestProduct = ctx.query.suggest_product || '';
+    const suggestQty = ctx.query.suggest_qty || '';
 
     const body = `
       <div class="page-header">
         <div><h1>Production interne</h1><p class="subtitle">Ordres de fabrication : consommation automatique des matieres premieres selon la recette, sortie de produit fini trace par lot</p></div>
+      </div>
+      <div class="panel">
+        <h2>Suggestions de fabrication (${suggestions.length})</h2>
+        <p class="hint muted">Base sur les seuils de reappro configures par boutique (voir Stock &rarr; Lots &amp; ajustement) : quantite cumulee manquante pour que chaque boutique en dessous de son seuil le retrouve. Rien n'est lance automatiquement - a valider ci-dessous.</p>
+        ${suggestions.length === 0 ? '<p class="empty">Aucune boutique en dessous de son seuil pour un produit fabrique ici, ou aucun seuil configure.</p>' : `
+        <table class="compact">
+          <thead><tr><th>Produit</th><th>Boutiques concernees</th><th>Quantite totale suggeree</th><th></th></tr></thead>
+          <tbody>
+            ${suggestions.map((s) => `
+              <tr>
+                <td>${esc(s.product_name)} <span class="mono muted">(${esc(s.sku)})</span></td>
+                <td class="muted">${s.sites.map((site) => `${esc(site.site_name)} (+${fmtQty(site.missing)})`).join(', ')}</td>
+                <td class="mono">${fmtQty(s.total_missing)} ${s.unit_code}</td>
+                <td><a href="/production?suggest_product=${s.product_id}&suggest_qty=${s.total_missing}#nouvel-ordre" class="btn btn-secondary btn-sm">Preparer &rarr;</a></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`}
       </div>
       <div class="panel">
         <h2>Ordres de fabrication (${orders.length})</h2>

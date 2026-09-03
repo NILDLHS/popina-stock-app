@@ -1,7 +1,7 @@
 const db = require('../lib/db');
 const { getTenantId } = require('../lib/tenant');
 const { layout, productTypeBadge } = require('../lib/render');
-const { esc, id, parseForm, fmtQty } = require('../lib/util');
+const { esc, id, parseForm, fmtQty, fmtMoney } = require('../lib/util');
 const stock = require('../lib/stock');
 
 function register(router) {
@@ -23,10 +23,13 @@ function register(router) {
           </form>
           <h2>Catalogue (${products.length})</h2>
           <table class="compact">
-            <thead><tr><th>SKU</th><th>Nom</th><th>Type</th><th>Categorie</th><th>Unite</th><th>Statut</th><th></th><th></th></tr></thead>
+            <thead><tr><th>SKU</th><th>Nom</th><th>Type</th><th>Categorie</th><th>Unite</th><th>Cout matiere</th><th>Statut</th><th></th><th></th></tr></thead>
             <tbody>
               ${products.map((p) => {
                 const usage = stock.getProductUsage(p.id);
+                const cost = p.type !== 'RAW' && stock.hasRecipe(p.id) ? stock.getMaterialCost(p.id) : null;
+                const costCell = !cost ? '<span class="muted">-</span>'
+                  : `<span class="mono">${fmtMoney(cost.totalCents)}</span>${cost.complete ? '' : ' <span class="badge badge-orange" title="Un ou plusieurs ingredients n\'ont jamais ete achetes avec un prix">incomplet</span>'}`;
                 return `
                 <tr>
                   <td class="mono">${esc(p.sku)}</td>
@@ -34,6 +37,7 @@ function register(router) {
                   <td>${productTypeBadge(p.type)}</td>
                   <td class="muted">${esc(p.category || '-')}</td>
                   <td class="mono muted">${esc(p.unit_code)}</td>
+                  <td>${costCell}</td>
                   <td>${p.is_active ? '<span class="badge badge-green">Actif</span>' : '<span class="badge badge-gray">Inactif</span>'}</td>
                   <td><a href="/products/${p.id}">Recette &amp; details &rarr;</a></td>
                   <td class="row-actions">
@@ -101,6 +105,7 @@ function register(router) {
     const recipe = stock.getRecipe(product.id);
     const allIngredients = db.prepare(`SELECT p.*, u.code as unit_code FROM products p JOIN units u ON u.id = p.unit_id WHERE p.type != 'FINISHED' AND p.id != ? AND p.is_active = 1 ORDER BY p.name`).all(product.id);
     const units = db.prepare('SELECT * FROM units').all();
+    const cost = recipe.length > 0 ? stock.getMaterialCost(product.id) : null;
 
     const body = `
       <div class="page-header">
@@ -112,12 +117,14 @@ function register(router) {
           <h2>Nomenclature / recette (BOM)</h2>
           ${recipe.length === 0 ? '<p class="empty">Aucune recette : ce produit est consomme directement (article de revente simple).</p>' : `
           <table class="compact">
-            <thead><tr><th>Ingredient</th><th>Quantite par unite produite/vendue</th><th></th></tr></thead>
+            <thead><tr><th>Ingredient</th><th>Quantite par unite produite/vendue</th><th>Prix unitaire</th><th>Cout</th><th></th></tr></thead>
             <tbody>
-              ${recipe.map((r) => `
+              ${cost.lines.map((r) => `
                 <tr>
                   <td>${esc(r.ingredient_name)} <span class="mono muted">(${esc(r.ingredient_sku)})</span></td>
                   <td class="mono">${fmtQty(r.quantity)} ${r.unit_code}</td>
+                  <td class="mono muted">${r.unit_price === null ? '<span title="Jamais achete avec un prix">inconnu</span>' : fmtMoney(r.unit_price) + '/' + r.unit_code}</td>
+                  <td class="mono">${r.line_cost === null ? '-' : fmtMoney(r.line_cost)}</td>
                   <td>
                     <form method="POST" action="/products/${product.id}/recipe/${r.id}/delete" onsubmit="return confirm('Retirer ${esc(r.ingredient_name).replace(/'/g, "\\'")} de la recette ?');">
                       <button class="btn btn-danger btn-sm" type="submit">Retirer</button>
@@ -125,6 +132,13 @@ function register(router) {
                   </td>
                 </tr>`).join('')}
             </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" style="text-align:right;font-weight:600">Cout matiere total${cost.complete ? '' : ' <span class="badge badge-orange">incomplet</span>'}</td>
+                <td class="mono" style="font-weight:600">${fmtMoney(cost.totalCents)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
           </table>`}
           ${product.type === 'RAW' ? '<p class="hint muted" style="margin-top:10px">Les matieres premieres ne portent pas de recette : elles sont elles-memes des ingredients.</p>' : `
           <hr class="sep" />
