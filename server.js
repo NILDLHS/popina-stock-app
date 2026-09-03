@@ -35,8 +35,10 @@ const server = http.createServer(async (req, res) => {
   const pathname = decodeURIComponent(parsed.pathname);
 
   // Authentification HTTP Basic (si BASIC_AUTH_USER/BASIC_AUTH_PASS sont definis, voir README) :
-  // exclut les webhooks Popina, qui s'authentifient eux-memes par signature HMAC (lib/popina.js).
-  if (auth.isEnabled() && !pathname.startsWith('/webhooks/popina/') && !auth.check(req)) {
+  // exclut les webhooks Popina (par-site ET url generale), qui s'authentifient eux-memes par
+  // signature HMAC (lib/popina.js) plutot que par mot de passe.
+  const isPopinaWebhook = pathname === '/webhooks/popina' || pathname.startsWith('/webhooks/popina/');
+  if (auth.isEnabled() && !isPopinaWebhook && !auth.check(req)) {
     return auth.requireAuth(res);
   }
 
