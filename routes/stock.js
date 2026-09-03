@@ -4,6 +4,36 @@ const { layout } = require('../lib/render');
 const { esc, parseForm, fmtQty, fmtDate, id, daysUntil, getCookie, setCookie } = require('../lib/util');
 const stockLib = require('../lib/stock');
 
+// Table detaillee (type, quantite, hier, ecart, DLC) reutilisee pour la section laboratoire
+// et pour le detail par site choisi dans le selecteur.
+function renderStockTable(rows, siteId) {
+  if (rows.length === 0) return '<p class="empty">Aucun produit reference.</p>';
+  return `
+    <table>
+      <thead><tr><th>Produit</th><th>Type</th><th>Quantite en stock</th><th>Hier</th><th>Ecart</th><th>DLC la plus proche</th><th></th></tr></thead>
+      <tbody>
+        ${rows.map((r) => {
+          const days = r.next_expiry ? daysUntil(r.next_expiry) : null;
+          const dlc = r.next_expiry ? `${fmtDate(r.next_expiry)} <span class="badge ${days < 0 ? 'badge-red' : days <= 3 ? 'badge-orange' : 'badge-gray'}">${days < 0 ? 'perime' : days + ' j'}</span>` : '<span class="muted">-</span>';
+          const delta = r.quantity - r.quantity_yesterday;
+          const deltaCell = Math.abs(delta) < 0.0001
+            ? '<span class="muted">=</span>'
+            : `<span class="mono" style="color:${delta > 0 ? 'var(--ok)' : 'var(--danger)'}">${delta > 0 ? '+' : ''}${fmtQty(delta)}</span>`;
+          return `
+          <tr>
+            <td>${esc(r.name)}</td>
+            <td class="muted">${r.type === 'FINISHED' ? '' : r.type}</td>
+            <td class="mono" style="${r.quantity <= 0 ? 'color:var(--danger)' : ''}">${fmtQty(r.quantity)} ${r.unit_code}</td>
+            <td class="mono muted">${fmtQty(r.quantity_yesterday)} ${r.unit_code}</td>
+            <td>${deltaCell}</td>
+            <td>${dlc}</td>
+            <td><a href="/stock/lots?site=${siteId}&product=${r.product_id}">Lots &amp; ajustement &rarr;</a></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
 function register(router) {
   router.get('/stock', (req, res, ctx) => {
     const sites = db.prepare('SELECT * FROM sites ORDER BY type, name').all();
@@ -11,15 +41,47 @@ function register(router) {
     if (ctx.query.site) setCookie(res, 'default_site', ctx.query.site);
     const site = sites.find((s) => s.id === siteId);
     const rows = site ? stockLib.getStockBySite(siteId) : [];
+    const tenantId = getTenantId();
+
+    const labSites = sites.filter((s) => s.type === 'PRODUCTION' && s.is_active);
+    const { sites: matrixSites, products: matrixProducts, qtyMap } = stockLib.getStockMatrix(tenantId);
 
     const body = `
       <div class="page-header">
         <div><h1>Stock par site</h1><p class="subtitle">Niveaux de stock temps reel, valorises par lot (FIFO / DLC la plus proche en premier)</p></div>
       </div>
+
+      ${labSites.map((lab) => `
+      <div class="panel">
+        <h2>Laboratoire &mdash; ${esc(lab.name)}</h2>
+        ${renderStockTable(stockLib.getStockBySite(lab.id), lab.id)}
+      </div>`).join('')}
+
+      <div class="panel">
+        <h2>Vue consolidee &mdash; tous les etablissements</h2>
+        <p class="hint muted">Stock actuel de chaque produit, pour chaque site, en un coup d'oeil.</p>
+        ${matrixProducts.length === 0 || matrixSites.length === 0 ? '<p class="empty">Rien a afficher.</p>' : `
+        <div style="overflow-x:auto">
+        <table class="compact">
+          <thead><tr><th>Produit</th>${matrixSites.map((s) => `<th>${esc(s.name)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${matrixProducts.map((p) => `
+              <tr>
+                <td>${esc(p.name)}</td>
+                ${matrixSites.map((s) => {
+                  const qty = qtyMap[p.id]?.[s.id] || 0;
+                  return `<td class="mono" style="${qty <= 0 ? 'color:var(--danger)' : ''}"><a href="/stock/lots?site=${s.id}&product=${p.id}">${fmtQty(qty)} ${p.unit_code}</a></td>`;
+                }).join('')}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>`}
+      </div>
+
       <div class="panel">
         <form method="GET" action="/stock" class="form-row" style="align-items:flex-end;max-width:400px">
           <div class="field" style="margin-bottom:0">
-            <label>Site</label>
+            <label>Detail d'un site</label>
             <select name="site" onchange="this.form.submit()">
               ${sites.map((s) => `<option value="${s.id}" ${s.id === siteId ? 'selected' : ''}>${esc(s.name)}${s.is_active ? '' : ' (inactif)'}</option>`).join('')}
             </select>
@@ -28,24 +90,7 @@ function register(router) {
       </div>
       <div class="panel">
         <h2>${site ? esc(site.name) : ''} &mdash; stock actuel</h2>
-        ${rows.length === 0 ? '<p class="empty">Aucun produit reference.</p>' : `
-        <table>
-          <thead><tr><th>Produit</th><th>Type</th><th>Quantite en stock</th><th>DLC la plus proche</th><th></th></tr></thead>
-          <tbody>
-            ${rows.map((r) => {
-              const days = r.next_expiry ? daysUntil(r.next_expiry) : null;
-              const dlc = r.next_expiry ? `${fmtDate(r.next_expiry)} <span class="badge ${days < 0 ? 'badge-red' : days <= 3 ? 'badge-orange' : 'badge-gray'}">${days < 0 ? 'perime' : days + ' j'}</span>` : '<span class="muted">-</span>';
-              return `
-              <tr>
-                <td>${esc(r.name)}</td>
-                <td class="muted">${r.type}</td>
-                <td class="mono" style="${r.quantity <= 0 ? 'color:var(--danger)' : ''}">${fmtQty(r.quantity)} ${r.unit_code}</td>
-                <td>${dlc}</td>
-                <td><a href="/stock/lots?site=${siteId}&product=${r.product_id}">Lots &amp; ajustement &rarr;</a></td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>`}
+        ${renderStockTable(rows, siteId)}
       </div>
     `;
     res.end(layout({ title: 'Stock', activePath: '/stock', body, flash: ctx.flash }));
